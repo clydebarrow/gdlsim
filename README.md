@@ -91,3 +91,7 @@ Each broadcast contains a Heartbeat, Ownship report, Stratux status, ForeFlight
 ID, Stratux heartbeat and one 1090ES traffic report per target, packed into UDP
 datagrams of at most 508 bytes.
 ```
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
