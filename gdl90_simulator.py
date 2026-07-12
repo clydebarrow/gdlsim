@@ -65,6 +65,7 @@ DISCOVERY_PORTS = (47578, 63093)
 EARTH_RADIUS = 6371.01 * 1000  # metres (spherical model used for translate)
 
 INVALID_DATA = -65536.0
+VS_NO_DATA = -2048  # 0x800 as a 12-bit two's complement value: GDL90 vertical-velocity "no data" sentinel
 
 # Unit ratios (value_in_base = value * ratio); base units are metres, m/s, etc.
 FOOT = 0.3048
@@ -432,7 +433,7 @@ def _position_report_body(
     track_valid = track != INVALID_DATA
     m = bits_to_byte(track_valid, is_heading, is_extrapolated, is_in_flight)
     speed_int = round(speed_mps / KNOT)
-    vs_int = int((vertical_speed_mps / FPM) / 64) if vertical_speed_mps != INVALID_DATA else int(INVALID_DATA / 64)
+    vs_int = round((vertical_speed_mps / FPM) / 64) if vertical_speed_mps != INVALID_DATA else VS_NO_DATA
 
     call_bytes = call_sign[:8].ljust(8).encode("ascii", "replace")
     return bytes([
