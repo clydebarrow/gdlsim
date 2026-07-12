@@ -90,7 +90,6 @@ An emulator sits behind a NAT and does not see UDP broadcasts, so:
 Each broadcast contains a Heartbeat, Ownship report, Stratux status, ForeFlight
 ID, Stratux heartbeat and one 1090ES traffic report per target, packed into UDP
 datagrams of at most 508 bytes.
-```
 
 ## License
 
