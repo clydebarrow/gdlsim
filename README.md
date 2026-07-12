@@ -1,12 +1,9 @@
 # GDL90 / SkyEcho Simulator (Python)
 
-A stand-alone, dependency-free Python 3 port of the Kotlin `Gdl90Simulator`. It
-broadcasts simulated [GDL90](https://www.faa.gov/air_traffic/technology/ads-b/archival/media/gdl90_public_icd_reva.pdf)
+A stand-alone, dependency-free Python 3 implementation of a GDL90 simulator. It
+broadcasts simulated [GDL90](https://www.faa.gov/sites/faa.gov/files/air_traffic/technology/adsb/archival/GDL90_Public_ICD_RevA.PDF)
 traffic over UDP and emulates a uAvionix **SkyEcho** device by exposing a
 WebSocket interface.
-
-The GDL90 wire format (CRC-16, byte-stuffing, message layouts) matches the Kotlin
-implementation in `common` byte-for-byte, verified against its unit-test vectors.
 
 ## Requirements
 
@@ -44,8 +41,7 @@ host explicitly:
 python3 gdl90_simulator.py --target 127.0.0.1
 ```
 
-The `GDL90_UNICAST` environment variable is also honoured for parity with the
-Kotlin app:
+The `GDL90_UNICAST` environment variable is also honoured.
 
 ```bash
 GDL90_UNICAST=127.0.0.1 python3 gdl90_simulator.py
