@@ -77,6 +77,9 @@ An emulator sits behind a NAT and does not see UDP broadcasts, so:
 | `--ws-port` | `7070` | WebSocket port for SkyEcho emulation |
 | `--target HOST[,HOST...]` | — | Explicit unicast target(s) |
 | `--broadcast [ADDR]` | — | Also subnet-broadcast (default `255.255.255.255`) |
+| `--threat` | — | For testing collision alarms: every 90 s, add a glider at 30 m/s that reaches the ownship 45 s later, taking the scenarios in turn: `HEADON` (level, head-on), `TURNING` (turning right at 3 degrees per second onto a head-on course), `CLIMB` (head-on, climbing at 2.5 m/s from 112 m below), `DESCEND` (crossing from the right, sinking at 3 m/s from 135 m above) and `CIRCLING` (circling 400 m to the right of the ownship's path, which should raise no alarm). Each has its own address and the call sign `THREAT1` to `THREAT5` |
+| `--scenario NAME` | — | Run only this threat scenario (`headon`, `turning`, `climb`, `descend` or `circling`) |
+| `--ownship-speed KMH` | `278` | Ownship ground speed (150 kt); about 100 for a glider |
 
 ## What is simulated
 

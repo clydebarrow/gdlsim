@@ -342,19 +342,40 @@ class Target:
     accuracy_v: float
     timestamp: float         # epoch seconds
     is_extrapolated: bool = False
+    turn_rate: float = 0.0   # degrees per second, positive to the right
 
     def distance(self, own: LocationState) -> float:
         return distance_to(self.latitude, self.longitude, own.latitude, own.longitude)
 
     def extrapolated(self, at: float) -> "Target":
         duration = at - self.timestamp
-        lat, lon = translate(self.latitude, self.longitude, self.track, duration * self.speed)
+        lat, lon, track = fly(self.latitude, self.longitude, self.track, self.turn_rate,
+                              self.speed, duration)
         altitude = self.altitude
         if -1000.0 < self.vertical_speed < 1000.0:
             altitude = self.altitude + self.vertical_speed * duration
-        return Target(lat, lon, altitude, self.speed, self.track, self.vertical_speed,
+        return Target(lat, lon, altitude, self.speed, track, self.vertical_speed,
                       self.address, self.category, self.call_sign, self.accuracy_h,
-                      self.accuracy_v, at, is_extrapolated=True)
+                      self.accuracy_v, at, is_extrapolated=True, turn_rate=self.turn_rate)
+
+
+FLY_STEP = 0.5  # seconds
+
+
+def fly(lat: float, lon: float, track: float, turn_rate: float, speed: float,
+        duration: float) -> tuple[float, float, float]:
+    """Fly at a constant speed and turn rate for duration seconds, backwards if it is
+    negative. Returns (lat, lon, track)."""
+    direction = 1.0 if duration >= 0 else -1.0
+    remaining = abs(duration)
+    while remaining > 0:
+        dt = min(FLY_STEP, remaining) * direction
+        # each step is a straight line along the track half way through it
+        middle = track + turn_rate * dt / 2
+        lat, lon = translate(lat, lon, middle % 360.0, speed * dt)
+        track = (track + turn_rate * dt) % 360.0
+        remaining -= abs(dt)
+    return lat, lon, track
 
 
 MAX_DISTANCE = 20000.0
@@ -378,13 +399,74 @@ def new_target(origin: LocationState, now: float) -> Target:
     )
 
 
+THREAT_ADDRESS = 0x7CFFF0   # of the first scenario; the others follow
+THREAT_SPEED = 30.0        # m/s, a glider
+THREAT_PERIOD = 90.0       # seconds between runs
+THREAT_TIME = 45.0         # seconds from the start of a run to the collision
+
+
+@dataclass
+class Scenario:
+    """A target that reaches the ownship THREAT_TIME seconds after the start of a run."""
+    name: str
+    description: str
+    # its track when it reaches the ownship, relative to the ownship's track
+    final_track: float
+    turn_rate: float = 0.0       # degrees per second, positive to the right
+    vertical_speed: float = 0.0  # m/s; it starts the climb or descent away from the ownship's height
+    # instead of a collision: circle at turn_rate, this far to the right of where the ownship will be
+    circle_offset: float | None = None
+
+
+THREAT_SCENARIOS = [
+    Scenario("HEADON", "level, head-on", 180.0),
+    Scenario("TURNING", "turning right at 3 degrees per second onto a head-on course", 180.0, turn_rate=3.0),
+    Scenario("CLIMB", "head-on, climbing at 2.5 m/s from 112 m below", 180.0, vertical_speed=2.5),
+    Scenario("DESCEND", "crossing from the right, sinking at 3 m/s from 135 m above", 270.0,
+             vertical_speed=-3.0),
+    Scenario("CIRCLING", "circling at 18 degrees per second, 400 m to the right of the ownship's path; "
+             "no collision", 0.0, turn_rate=18.0, circle_offset=400.0),
+]
+
+
+def new_threat(origin: LocationState, now: float, index: int) -> Target:
+    """The scenario's target, placed by flying it backwards from the point where the ownship will be.
+    Each scenario has its own address, and a call sign that is not an instruction."""
+    scenario = THREAT_SCENARIOS[index]
+    meet = origin.extrapolate(THREAT_TIME)
+    if scenario.circle_offset is not None:
+        # start on the left of the circle, flying the ownship's way, and turn right round it
+        radius = THREAT_SPEED / math.radians(scenario.turn_rate)
+        lat, lon = translate(meet.latitude, meet.longitude, (origin.track + 90.0) % 360.0,
+                             scenario.circle_offset - radius)
+        track = origin.track
+    else:
+        final_track = (origin.track + scenario.final_track) % 360.0
+        lat, lon, track = fly(meet.latitude, meet.longitude, final_track, scenario.turn_rate,
+                              THREAT_SPEED, -THREAT_TIME)
+    return Target(
+        latitude=lat, longitude=lon, altitude=origin.altitude - scenario.vertical_speed * THREAT_TIME,
+        speed=THREAT_SPEED, track=track, vertical_speed=scenario.vertical_speed,
+        address=THREAT_ADDRESS + index, category=EC_GLIDER, call_sign=f"THREAT{index + 1}",
+        accuracy_h=20.0, accuracy_v=20.0, timestamp=now, turn_rate=scenario.turn_rate,
+    )
+
+
+def is_threat(target: Target) -> bool:
+    return THREAT_ADDRESS <= target.address < THREAT_ADDRESS + len(THREAT_SCENARIOS)
+
+
 class Simulation:
-    def __init__(self) -> None:
+    def __init__(self, scenarios: list[int] | None = None, ownship_speed: float = knots_to_mps(150.0)) -> None:
+        # the indexes of the threat scenarios to run in turn; none for no threat
+        self.scenarios = scenarios or []
+        self.threat_runs = 0
+        self.threat_started = 0.0
         self.initial = LocationState(
             latitude=-28.149444444444445,
             longitude=151.94305555555556,
             altitude=feet_to_m(2500.0),
-            speed=knots_to_mps(150.0),
+            speed=ownship_speed,
             track=0.0,
             accuracy_h=6.0,
             accuracy_v=9.0,
@@ -397,7 +479,18 @@ class Simulation:
 
     def update_traffic(self, now: float) -> None:
         valid = [t.extrapolated(now) for t in self.targets
-                 if t.distance(self.current) < MAX_DISTANCE]
+                 if t.distance(self.current) < MAX_DISTANCE and not is_threat(t)]
+        if self.scenarios:
+            if now - self.threat_started >= THREAT_PERIOD:
+                self.threat_started = now
+                index = self.scenarios[self.threat_runs % len(self.scenarios)]
+                self.threat_runs += 1
+                scenario = THREAT_SCENARIOS[index]
+                print(f"Threat run started: THREAT{index + 1} {scenario.name}, {scenario.description}")
+                threat = new_threat(self.current, now, index)
+            else:
+                threat = next(t for t in self.targets if is_threat(t)).extrapolated(now)
+            valid.insert(0, threat)
         while len(valid) < MAX_TARGETS:
             valid.append(new_target(self.current, now))
         self.targets = valid
@@ -794,7 +887,12 @@ def make_ws_handler(sim: Simulation, registry: ClientRegistry):
 # ---------------------------------------------------------------------------
 
 async def async_main(args: argparse.Namespace) -> None:
-    sim = Simulation()
+    scenarios = []
+    if args.scenario:
+        scenarios = [next(i for i, s in enumerate(THREAT_SCENARIOS) if s.name == args.scenario.upper())]
+    elif args.threat:
+        scenarios = list(range(len(THREAT_SCENARIOS)))
+    sim = Simulation(scenarios, args.ownship_speed / 3.6)
     registry = ClientRegistry()
 
     # Explicit unicast targets: CLI and GDL90_UNICAST env (parity with Kotlin app).
@@ -836,6 +934,15 @@ def main() -> None:
                         help="Explicit unicast target host(s) instead of/along with discovery")
     parser.add_argument("--broadcast", nargs="?", const="", default=None, metavar="ADDR",
                         help="Also subnet-broadcast GDL90 (default 255.255.255.255)")
+    parser.add_argument("--threat", action="store_true",
+                        help=f"Every {THREAT_PERIOD:.0f} s, add a glider at {THREAT_SPEED:.0f} m/s that reaches the "
+                             f"ownship {THREAT_TIME:.0f} s later, taking the scenarios in turn (call signs THREAT1 "
+                             "and on): " + "; ".join(f"{s.name} ({s.description})" for s in THREAT_SCENARIOS))
+    parser.add_argument("--scenario", choices=[s.name.lower() for s in THREAT_SCENARIOS],
+                        type=str.lower, default=None,
+                        help="Run only this threat scenario (implies --threat)")
+    parser.add_argument("--ownship-speed", type=float, default=knots_to_mps(150.0) * 3.6, metavar="KMH",
+                        help="Ownship ground speed in km/h (default 278, 150 kt); about 100 for a glider")
     args = parser.parse_args()
 
     try:
