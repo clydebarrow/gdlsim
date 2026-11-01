@@ -457,7 +457,8 @@ def is_threat(target: Target) -> bool:
 
 
 class Simulation:
-    def __init__(self, scenarios: list[int] | None = None, ownship_speed: float = knots_to_mps(150.0)) -> None:
+    def __init__(self, scenarios: list[int] | None = None, ownship_speed: float = knots_to_mps(150.0),
+                 ownship_altitude: float = feet_to_m(2500.0)) -> None:
         # the indexes of the threat scenarios to run in turn; none for no threat
         self.scenarios = scenarios or []
         self.threat_runs = 0
@@ -465,7 +466,7 @@ class Simulation:
         self.initial = LocationState(
             latitude=-28.149444444444445,
             longitude=151.94305555555556,
-            altitude=feet_to_m(2500.0),
+            altitude=ownship_altitude,
             speed=ownship_speed,
             track=0.0,
             accuracy_h=6.0,
@@ -892,7 +893,7 @@ async def async_main(args: argparse.Namespace) -> None:
         scenarios = [next(i for i, s in enumerate(THREAT_SCENARIOS) if s.name == args.scenario.upper())]
     elif args.threat:
         scenarios = list(range(len(THREAT_SCENARIOS)))
-    sim = Simulation(scenarios, args.ownship_speed / 3.6)
+    sim = Simulation(scenarios, args.ownship_speed / 3.6, feet_to_m(args.ownship_altitude))
     registry = ClientRegistry()
 
     # Explicit unicast targets: CLI and GDL90_UNICAST env (parity with Kotlin app).
@@ -943,6 +944,9 @@ def main() -> None:
                         help="Run only this threat scenario (implies --threat)")
     parser.add_argument("--ownship-speed", type=float, default=knots_to_mps(150.0) * 3.6, metavar="KMH",
                         help="Ownship ground speed in km/h (default 278, 150 kt); about 100 for a glider")
+    parser.add_argument("--ownship-altitude", type=float, default=2500.0, metavar="FT",
+                        help="Ownship altitude in feet (default 2500); the start position is at about 1500, so use "
+                             "1600 with a speed of 0 to test take-off and landing detection")
     args = parser.parse_args()
 
     try:
